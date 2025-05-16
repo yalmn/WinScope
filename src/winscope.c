@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 
+#define CMD_SIZE 2048
 #define BUF_SIZE 8192
 #define WIN_MOUNT_PREFIX "/c"
 #define PATH_SYSTEM_HIVE WIN_MOUNT_PREFIX "/Windows/System32/config/SYSTEM"
@@ -13,7 +15,10 @@ char *run_command(const char *cmd)
 {
     FILE *fp = popen(cmd, "r");
     if (!fp)
+    {
+        fprintf(stderr, "popen failed: %s\n", strerror(errno));
         return NULL;
+    }
     char *output = malloc(BUF_SIZE);
     size_t capacity = BUF_SIZE;
     size_t len = 0;
@@ -40,15 +45,28 @@ char *current_timestamp()
     return buffer;
 }
 
-// HTML-Header
+// HTML-Header mit CSS für bessere Formatierung
 void write_html_header(FILE *out, const char *title)
 {
     fprintf(out,
             "<!DOCTYPE html>\n"
             "<html lang=\"de\">\n"
-            "<head><meta charset=\"UTF-8\">\n"
-            "<title>%s</title>\n"
-            "<style>body{font-family:Arial,sans-serif;} h2{border-bottom:1px solid #ccc;}</style>\n"
+            "<head>\n"
+            "  <meta charset=\"UTF-8\">\n"
+            "  <title>%s</title>\n"
+            "  <style>\n"
+            "    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }\n"
+            "    h1 { color: #333; border-bottom: 2px solid #666; padding-bottom: 5px; }\n"
+            "    h2 { color: #444; margin-top: 30px; }\n"
+            "    h3 { color: #555; margin-top: 15px; }\n"
+            "    pre { background: #fff; padding: 10px; border: 1px solid #ccc; overflow-x: auto; }\n"
+            "    .timestamp { font-size: 0.9em; color: #666; margin-bottom: 20px; }\n"
+            "    .section { background: #fff; padding: 15px; border-radius: 5px;\n"
+            "               box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }\n"
+            "    .eval { display: flex; gap: 20px; }\n"
+            "    .eval p { flex: 1; background: #eef; padding: 10px;\n"
+            "              border-radius: 3px; text-align: center; }\n"
+            "  </style>\n"
             "</head>\n"
             "<body>\n"
             "<h1>%s</h1>\n",
@@ -73,42 +91,62 @@ int main(int argc, char *argv[])
     const char *exp_user = argv[3];
     const char *out_dir = argv[4];
 
-    char cmd[1024];
+    char cmd[CMD_SIZE];
 
-    // Hive-Extraktion
-    snprintf(cmd, sizeof(cmd),
-             "icat -r %s %s > %s/SYSTEM.hive",
-             image, PATH_SYSTEM_HIVE, out_dir);
+    // 1) Hive-Extraktion
+    if (snprintf(cmd, CMD_SIZE,
+                 "icat -r %s %s > %s/SYSTEM.hive",
+                 image, PATH_SYSTEM_HIVE, out_dir) >= CMD_SIZE)
+    {
+        fprintf(stderr, "ERROR: SYSTEM hive extraction command too long\n");
+        return 1;
+    }
     system(cmd);
-    snprintf(cmd, sizeof(cmd),
-             "icat -r %s %s > %s/SOFTWARE.hive",
-             image, PATH_SOFTWARE_HIVE, out_dir);
+
+    if (snprintf(cmd, CMD_SIZE,
+                 "icat -r %s %s > %s/SOFTWARE.hive",
+                 image, PATH_SOFTWARE_HIVE, out_dir) >= CMD_SIZE)
+    {
+        fprintf(stderr, "ERROR: SOFTWARE hive extraction command too long\n");
+        return 1;
+    }
     system(cmd);
 
-    // RegRipper auf den extrahierten Hives
-    char path_system[1024], path_software[1024];
-    snprintf(path_system, sizeof(path_system), "%s/SYSTEM.hive", out_dir);
-    snprintf(path_software, sizeof(path_software), "%s/SOFTWARE.hive", out_dir);
+    // 2) Regripper auf den extrahierten Hives
+    char path_system[CMD_SIZE], path_software[CMD_SIZE];
+    snprintf(path_system, CMD_SIZE, "%s/SYSTEM.hive", out_dir);
+    snprintf(path_software, CMD_SIZE, "%s/SOFTWARE.hive", out_dir);
 
-    snprintf(cmd, sizeof(cmd),
-             "rip.pl -r %s -p compname -p usbtor -p usbdevices", path_system);
+    if (snprintf(cmd, CMD_SIZE,
+                 "regripper -r %s -p compname,usbtor,usbdevices",
+                 path_system) >= CMD_SIZE)
+    {
+        fprintf(stderr, "ERROR: Regripper SYSTEM command too long\n");
+        return 1;
+    }
     char *out_ripper_sys = run_command(cmd);
 
-    snprintf(cmd, sizeof(cmd),
-             "rip.pl -r %s -p profillist -p volinfocache -p portdev", path_software);
+    if (snprintf(cmd, CMD_SIZE,
+                 "regripper -r %s -p profillist,volinfocache,portdev",
+                 path_software) >= CMD_SIZE)
+    {
+        fprintf(stderr, "ERROR: Regripper SOFTWARE command too long\n");
+        return 1;
+    }
     char *out_ripper_soft = run_command(cmd);
 
-    // Sleuth Kit-Systeminfos
-    snprintf(cmd, sizeof(cmd), "mmls %s", image);
+    // 3) Sleuth Kit-Systeminfos
+    snprintf(cmd, CMD_SIZE, "mmls %s", image);
     char *out_mmls = run_command(cmd);
-    snprintf(cmd, sizeof(cmd), "fsstat %s", image);
+    snprintf(cmd, CMD_SIZE, "fsstat %s", image);
     char *out_fsstat = run_command(cmd);
-    snprintf(cmd, sizeof(cmd), "fls -r %s", image);
+    snprintf(cmd, CMD_SIZE, "fls -r %s", image);
     char *out_fls = run_command(cmd);
 
-    // HTML-Report schreiben
-    char report_path[1024];
-    snprintf(report_path, sizeof(report_path), "%s/winscope_report.html", out_dir);
+    // 4) HTML-Report schreiben
+    char report_path[CMD_SIZE];
+    snprintf(report_path, CMD_SIZE, "%s/winscope_report.html", out_dir);
+
     FILE *html = fopen(report_path, "w");
     if (!html)
     {
@@ -117,29 +155,34 @@ int main(int argc, char *argv[])
     }
 
     write_html_header(html, "WinScope Report");
-    // Zeitstempel einfügen
-    fprintf(html, "<p><em>Erstellt am: %s</em></p>\n", current_timestamp());
+    fprintf(html, "<div class=\"timestamp\">Erstellt am: %s</div>\n", current_timestamp());
 
-    fprintf(html, "<h2>1. Hive-Analyse</h2>\n");
-    fprintf(html, "<h3>1.1 SYSTEM (%s)</h3><pre>%s</pre>\n",
-            PATH_SYSTEM_HIVE, out_ripper_sys);
-    fprintf(html, "<h3>1.2 SOFTWARE (%s)</h3><pre>%s</pre>\n",
-            PATH_SOFTWARE_HIVE, out_ripper_soft);
+    // 1. Hive-Analyse
+    fprintf(html, "<div class=\"section\">\n");
+    fprintf(html, "  <h2>1. Hive-Analyse</h2>\n");
+    fprintf(html, "  <h3>1.1 SYSTEM (%s)</h3>\n", PATH_SYSTEM_HIVE);
+    fprintf(html, "  <pre>%s</pre>\n", out_ripper_sys);
+    fprintf(html, "  <h3>1.2 SOFTWARE (%s)</h3>\n", PATH_SOFTWARE_HIVE);
+    fprintf(html, "  <pre>%s</pre>\n", out_ripper_soft);
+    fprintf(html, "</div>\n");
 
-    fprintf(html, "<h2>2. Systeminfos</h2>\n");
-    fprintf(html, "<h3>2.1 mmls</h3><pre>%s</pre>\n", out_mmls);
-    fprintf(html, "<h3>2.2 fsstat</h3><pre>%s</pre>\n", out_fsstat);
-    fprintf(html, "<h3>2.3 fls</h3><pre>%s</pre>\n", out_fls);
+    // 2. Systeminfos
+    fprintf(html, "<div class=\"section\">\n");
+    fprintf(html, "  <h2>2. Systeminfos</h2>\n");
+    fprintf(html, "  <h3>2.1 mmls</h3>\n<pre>%s</pre>\n", out_mmls);
+    fprintf(html, "  <h3>2.2 fsstat</h3>\n<pre>%s</pre>\n", out_fsstat);
+    fprintf(html, "  <h3>2.3 fls</h3>\n<pre>%s</pre>\n", out_fls);
+    fprintf(html, "</div>\n");
 
-    // Evaluierung
+    // 3. Evaluierung
     int comp_ok = (strstr(out_ripper_sys, exp_comp) != NULL);
     int user_ok = (strstr(out_ripper_soft, exp_user) != NULL);
-    fprintf(html,
-            "<h2>3. Evaluierung</h2>\n"
-            "<p>Rechner: %s – %s</p>\n"
-            "<p>User: %s – %s</p>\n",
-            exp_comp, comp_ok ? "✔️" : "❌",
-            exp_user, user_ok ? "✔️" : "❌");
+    fprintf(html, "<div class=\"section eval\">\n");
+    fprintf(html, "  <p><strong>Rechner:</strong> %s – %s</p>\n",
+            exp_comp, comp_ok ? "✔️ korrekt" : "❌ falsch");
+    fprintf(html, "  <p><strong>User:</strong>    %s – %s</p>\n",
+            exp_user, user_ok ? "✔️ korrekt" : "❌ falsch");
+    fprintf(html, "</div>\n");
 
     write_html_footer(html);
     fclose(html);
