@@ -10,7 +10,13 @@
 #define PATH_SYSTEM_HIVE WIN_MOUNT_PREFIX "/Windows/System32/config/SYSTEM"
 #define PATH_SOFTWARE_HIVE WIN_MOUNT_PREFIX "/Windows/System32/config/SOFTWARE"
 
-// Führt einen Befehl aus und liefert seine Ausgabe als malloc’ed string zurück
+/**
+ * Führt einen Shell-Befehl aus und sammelt seine Standardausgabe.
+ *
+ * @param cmd  Der auszuführende Befehl.
+ * @return     Ein malloc’ed String mit der Ausgabe (muss vom Aufrufer freigegeben werden),
+ *             oder NULL bei Fehler.
+ */
 char *run_command(const char *cmd)
 {
     FILE *fp = popen(cmd, "r");
@@ -35,7 +41,11 @@ char *run_command(const char *cmd)
     return output;
 }
 
-// Gibt einen formatierten Zeitstempel zurück (z.B. "2025-05-16 14:23:01")
+/**
+ * Erzeugt einen formatierten Zeitstempel im Format "YYYY-MM-DD HH:MM:SS".
+ *
+ * @return Ein statischer Puffer mit dem aktuellen Zeitstempel.
+ */
 char *current_timestamp()
 {
     time_t now = time(NULL);
@@ -45,7 +55,12 @@ char *current_timestamp()
     return buffer;
 }
 
-// HTML-Header mit CSS für bessere Formatierung
+/**
+ * Schreibt den Anfang eines HTML-Dokuments mit einfachem CSS-Layout.
+ *
+ * @param out    Die Ausgabedatei (FILE*), in die der Header geschrieben wird.
+ * @param title  Der Titel für <title> und Überschrift <h1>.
+ */
 void write_html_header(FILE *out, const char *title)
 {
     fprintf(out,
@@ -73,12 +88,30 @@ void write_html_header(FILE *out, const char *title)
             title, title);
 }
 
-// HTML-Footer
+/**
+ * Schreibt das schließende HTML-Tag-Paar für das Dokument.
+ *
+ * @param out  Die Ausgabedatei (FILE*), in die der Footer geschrieben wird.
+ */
 void write_html_footer(FILE *out)
 {
     fprintf(out, "</body>\n</html>\n");
 }
 
+/**
+ * Hauptprogramm: Extrahiert Windows-Hives, analysiert sie mit Regripper
+ * und generiert einen HTML-Report mit Systeminformationen.
+ *
+ * Usage: ./winscope <image.dd> <compname> <username> <output_dir>
+ *
+ * @param argc  Anzahl der Kommandozeilenargumente.
+ * @param argv  Argument-Liste:
+ *              argv[1] = Pfad zum Image (RAW dd-Datei),
+ *              argv[2] = Erwarteter Computername,
+ *              argv[3] = Erwarteter Benutzername,
+ *              argv[4] = Ausgabe-Verzeichnis für Report und Hive-Dateien.
+ * @return      0 bei Erfolg, 1 bei Fehlern.
+ */
 int main(int argc, char *argv[])
 {
     if (argc != 5)
@@ -179,9 +212,9 @@ int main(int argc, char *argv[])
     int user_ok = (strstr(out_ripper_soft, exp_user) != NULL);
     fprintf(html, "<div class=\"section eval\">\n");
     fprintf(html, "  <p><strong>Rechner:</strong> %s – %s</p>\n",
-            exp_comp, comp_ok ? "✔️ korrekt" : "❌ falsch");
+            exp_comp, comp_ok ? " korrekt" : " falsch");
     fprintf(html, "  <p><strong>User:</strong>    %s – %s</p>\n",
-            exp_user, user_ok ? "✔️ korrekt" : "❌ falsch");
+            exp_user, user_ok ? " korrekt" : " falsch");
     fprintf(html, "</div>\n");
 
     write_html_footer(html);
