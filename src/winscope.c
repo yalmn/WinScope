@@ -4,14 +4,13 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include <errno.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #define CMD_SIZE 2048
 #define BUF_SIZE 8192
 
-char *run_command(const char *cmd)
-{
+char *run_command(const char *cmd) {
     FILE *fp = popen(cmd, "r");
     if (!fp) return NULL;
 
@@ -29,8 +28,7 @@ char *run_command(const char *cmd)
     return output;
 }
 
-char *current_timestamp()
-{
+char *current_timestamp() {
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     static char buffer[20];
@@ -38,121 +36,151 @@ char *current_timestamp()
     return buffer;
 }
 
-int find_inode(const char *image, const char *target_path, uint64_t offset, char *inode_buf, size_t buf_size)
-{
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "fls -r -o %" PRIu64 " %s", offset, image);
+uint64_t prompt_for_offset(const char *image) {
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "mmls \"%s\"", image);
+    printf("--- Partitionstabelle ---\n");
+    system(cmd);
 
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return 0;
+    char input[64];
+    printf("\n[?] Bitte Offset der Basic Data Partition eingeben: ");
+    fgets(input, sizeof(input), stdin);
+    return strtoull(input, NULL, 10);
+}
 
-    char line[1024];
-    while (fgets(line, sizeof(line), fp)) {
-        if (strstr(line, target_path)) {
-            char *colon = strchr(line, ':');
-            if (colon && colon - line > 5) {
-                snprintf(inode_buf, buf_size, "%.*s", (int)(colon - line - 5), line + 5);
-                pclose(fp);
-                return 1;
-            }
+void prompt_and_run_fls(const char *image, uint64_t offset, char *inode_out, const char *description) {
+    char cmd[CMD_SIZE], input[32];
+    printf("\n--- %s ---\n", description);
+    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s\n", offset, image);
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
+    system(cmd);
+    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;
+    strncpy(inode_out, input, 31);
+}
+
+void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char *inode, char *next_inode_out, const char *description) {
+    char cmd[CMD_SIZE], input[32];
+    printf("\n--- %s ---\n", description);
+    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s %s\n", offset, image, inode);
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode);
+    system(cmd);
+    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;
+    strncpy(next_inode_out, input, 31);
+}
+
+void write_html_header(FILE *f, const char *expected_user, const char *expected_comp) {
+    fprintf(f, "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>WinScope Report</title><style>body{font-family:sans-serif;margin:20px;}pre{background:#eee;padding:10px;border:1px solid #ccc;} .ok{color:green;} .fail{color:red;}</style></head><body>");
+    fprintf(f, "<h1>WinScope Report</h1><p>Erstellt: %s</p>", current_timestamp());
+    fprintf(f, "<p>Erwarteter Computername: <strong>%s</strong></p>", expected_comp);
+    fprintf(f, "<p>Erwarteter Benutzername: <strong>%s</strong></p>\n", expected_user);
+}
+
+void write_html_footer(FILE *f) {
+    fprintf(f, "</body></html>\n");
+}
+
+void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, const char *section_title, const char *output_dir) {
+    char hive_full[CMD_SIZE];
+    snprintf(hive_full, sizeof(hive_full), "%s/%s", output_dir, hive_path);
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "regripper -r \"%s\" -p %s", hive_full, plugin);
+    char *result = run_command(cmd);
+    fprintf(f, "<h2>%s (%s)</h2><pre>%s</pre>\n", section_title, plugin, result ? result : "(keine Ausgabe)");
+
+    // Vergleich am Ende vorbereiten
+    if (strcmp(plugin, "compname") == 0 && result) {
+        if (strstr(result, output_dir)) {
+            fprintf(f, "<p class='ok'>[✓] Computername stimmt mit Erwartung überein.</p>");
+        } else {
+            fprintf(f, "<p class='fail'>[✗] Computername stimmt NICHT mit Erwartung überein.</p>");
         }
     }
-    pclose(fp);
-    return 0;
+    if (strcmp(plugin, "profilelist") == 0 && result) {
+        if (strstr(result, output_dir)) {
+            fprintf(f, "<p class='ok'>[✓] Benutzername stimmt mit Erwartung überein.</p>");
+        } else {
+            fprintf(f, "<p class='fail'>[✗] Benutzername stimmt NICHT mit Erwartung überein.</p>");
+        }
+    }
+
+    free(result);
 }
 
-void write_html_header(FILE *out, const char *title)
-{
-    fprintf(out,
-        "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"UTF-8\"><title>%s</title>\n"
-        "<style>body{font-family:sans-serif;margin:20px;background:#f5f5f5}h1{color:#333}"
-        "pre{background:#fff;padding:10px;border:1px solid #ccc;overflow-x:auto}</style></head><body>\n"
-        "<h1>%s</h1>\n", title, title);
+void run_command_section(FILE *f, const char *image, uint64_t offset) {
+    char cmd[CMD_SIZE];
+
+    snprintf(cmd, sizeof(cmd), "mmls \"%s\"", image);
+    char *mmls = run_command(cmd);
+    fprintf(f, "<h2>Partitionstabelle (mmls)</h2><pre>%s</pre>\n", mmls ? mmls : "(keine Ausgabe)");
+    free(mmls);
+
+    snprintf(cmd, sizeof(cmd), "fsstat -o %" PRIu64 " \"%s\"", offset, image);
+    char *fsstat = run_command(cmd);
+    fprintf(f, "<h2>Filesystem-Statistik (fsstat)</h2><pre>%s</pre>\n", fsstat ? fsstat : "(keine Ausgabe)");
+    free(fsstat);
+
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
+    char *fls = run_command(cmd);
+    fprintf(f, "<h2>Dateisystemstruktur (fls)</h2><pre>%s</pre>\n", fls ? fls : "(keine Ausgabe)");
+    free(fls);
 }
 
-void write_html_footer(FILE *out)
-{
-    fprintf(out, "</body></html>\n");
-}
-
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     if (argc != 5) {
-        fprintf(stderr, "Usage: %s <image.dd> <expected_comp> <expected_user> <output_dir>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <image.dd> <expected_user> <expected_comp> <output_dir>\n", argv[0]);
         return 1;
     }
 
     const char *image = argv[1];
-    const char *exp_comp = argv[2];
-    const char *exp_user = argv[3];
+    const char *exp_user = argv[2];
+    const char *exp_comp = argv[3];
     const char *out_dir = argv[4];
 
-    uint64_t offset = 1058816; // Offset der BDP (zuvor mit mmls prüfen)
-    char cmd[CMD_SIZE], inode_sys[32], inode_software[32];
+    char inode_windows[32], inode_system32[32], inode_config[32];
+    char inode_system[32], inode_software[32];
 
-    if (!find_inode(image, "Windows/System32/config/SYSTEM", offset, inode_sys, sizeof(inode_sys))) {
-        fprintf(stderr, "[!] SYSTEM-Inode nicht gefunden.\n");
-        return 1;
-    }
+    uint64_t offset = prompt_for_offset(image);
 
-    if (!find_inode(image, "Windows/System32/config/SOFTWARE", offset, inode_software, sizeof(inode_software))) {
-        fprintf(stderr, "[!] SOFTWARE-Inode nicht gefunden.\n");
-        return 1;
-    }
+    prompt_and_run_fls(image, offset, inode_windows, "Windows-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_windows, inode_system32, "System32-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_system32, inode_config, "config-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_system, "SYSTEM-Datei");
+    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_software, "SOFTWARE-Datei");
 
-    snprintf(cmd, CMD_SIZE, "icat -f ntfs -o %" PRIu64 " %s %s > %s/SYSTEM.hive", offset, image, inode_sys, out_dir);
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SYSTEM.hive\"", offset, image, inode_system, out_dir);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SOFTWARE.hive\"", offset, image, inode_software, out_dir);
     system(cmd);
 
-    snprintf(cmd, CMD_SIZE, "icat -f ntfs -o %" PRIu64 " %s %s > %s/SOFTWARE.hive", offset, image, inode_software, out_dir);
-    system(cmd);
-
-    char report_path[CMD_SIZE];
-    snprintf(report_path, sizeof(report_path), "%s/winscope_report.html", out_dir);
-    FILE *html = fopen(report_path, "w");
+    char html_path[CMD_SIZE];
+    snprintf(html_path, sizeof(html_path), "%s/winscope_report.html", out_dir);
+    FILE *html = fopen(html_path, "w");
     if (!html) {
         perror("fopen");
         return 1;
     }
 
-    write_html_header(html, "WinScope Report");
-    fprintf(html, "<div>Erstellt am: %s</div>\n", current_timestamp());
+    write_html_header(html, exp_user, exp_comp);
+    run_command_section(html, image, offset);
 
-    const char *plugins_sys[] = { "compname", "usbtor", "usbdevices" };
-    const char *plugins_soft[] = { "profillist", "volinfocache", "portdev" };
+    fprintf(html, "<h2>SYSTEM Hive Analyse</h2>");
+    run_plugin_to_html(html, "SYSTEM.hive", "compname", "Computername", out_dir);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbstor", "USB Historie", out_dir);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbdevices", "USB Geräte", out_dir);
 
-    fprintf(html, "<h2>SYSTEM-Analyse</h2>\n");
-    for (int i = 0; i < 3; i++) {
-        snprintf(cmd, CMD_SIZE, "regripper -r %s/SYSTEM.hive -p %s", out_dir, plugins_sys[i]);
-        char *out = run_command(cmd);
-        fprintf(html, "<h3>%s</h3><pre>%s</pre>\n", plugins_sys[i], out ? out : "(keine Ausgabe)");
-        free(out);
-    }
+    fprintf(html, "<h2>SOFTWARE Hive Analyse</h2>");
+    run_plugin_to_html(html, "SOFTWARE.hive", "profilelist", "Benutzerprofile", out_dir);
+    run_plugin_to_html(html, "SOFTWARE.hive", "volinfocache", "VolumeInfoCache", out_dir);
+    run_plugin_to_html(html, "SOFTWARE.hive", "portdev", "Port Devices", out_dir);
 
-    fprintf(html, "<h2>SOFTWARE-Analyse</h2>\n");
-    for (int i = 0; i < 3; i++) {
-        snprintf(cmd, CMD_SIZE, "regripper -r %s/SOFTWARE.hive -p %s", out_dir, plugins_soft[i]);
-        char *out = run_command(cmd);
-        fprintf(html, "<h3>%s</h3><pre>%s</pre>\n", plugins_soft[i], out ? out : "(keine Ausgabe)");
-        free(out);
-    }
-
-    fprintf(html, "<h2>Evaluierung</h2><pre>");
-    snprintf(cmd, CMD_SIZE, "strings %s/SYSTEM.hive", out_dir);
-    char *sys_data = run_command(cmd);
-    snprintf(cmd, CMD_SIZE, "strings %s/SOFTWARE.hive", out_dir);
-    char *soft_data = run_command(cmd);
-
-    int comp_ok = (sys_data && strstr(sys_data, exp_comp));
-    int user_ok = (soft_data && strstr(soft_data, exp_user));
-    fprintf(html, "Hostname: %s → %s\n", exp_comp, comp_ok ? "OK" : "NICHT GEFUNDEN");
-    fprintf(html, "Benutzer: %s → %s\n", exp_user, user_ok ? "OK" : "NICHT GEFUNDEN");
-    fprintf(html, "</pre>\n");
-
-    free(sys_data);
-    free(soft_data);
     write_html_footer(html);
     fclose(html);
 
-    printf("Report gespeichert unter: %s\n", report_path);
+    printf("\n[+] SYSTEM und SOFTWARE extrahiert und HTML-Report gespeichert unter: %s\n", html_path);
     return 0;
 }
