@@ -1,53 +1,34 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include <errno.h>
+#include <inttypes.h>
+#include <unistd.h>
 
 #define CMD_SIZE 2048
 #define BUF_SIZE 8192
-#define WIN_MOUNT_PREFIX "/c"
-#define PATH_SYSTEM_HIVE WIN_MOUNT_PREFIX "/Windows/System32/config/SYSTEM"
-#define PATH_SOFTWARE_HIVE WIN_MOUNT_PREFIX "/Windows/System32/config/SOFTWARE"
 
-/**
- * Führt einen Shell-Befehl aus und sammelt seine Standardausgabe.
- *
- * @param cmd  Der auszuführende Befehl.
- * @return     Ein malloc’ed String mit der Ausgabe (muss vom Aufrufer freigegeben werden),
- *             oder NULL bei Fehler.
- */
-char *run_command(const char *cmd)
-{
+char *run_command(const char *cmd) {
     FILE *fp = popen(cmd, "r");
-    if (!fp)
-    {
-        fprintf(stderr, "popen failed: %s\n", strerror(errno));
-        return NULL;
-    }
+    if (!fp) return NULL;
+
     char *output = malloc(BUF_SIZE);
-    size_t capacity = BUF_SIZE;
-    size_t len = 0;
-    while (fgets(output + len, capacity - len, fp))
-    {
+    size_t len = 0, cap = BUF_SIZE;
+
+    while (fgets(output + len, cap - len, fp)) {
         len = strlen(output);
-        if (capacity - len < 1024)
-        {
-            capacity *= 2;
-            output = realloc(output, capacity);
+        if (cap - len < 1024) {
+            cap *= 2;
+            output = realloc(output, cap);
         }
     }
     pclose(fp);
     return output;
 }
 
-/**
- * Erzeugt einen formatierten Zeitstempel im Format "YYYY-MM-DD HH:MM:SS".
- *
- * @return Ein statischer Puffer mit dem aktuellen Zeitstempel.
- */
-char *current_timestamp()
-{
+char *current_timestamp() {
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     static char buffer[20];
@@ -55,178 +36,151 @@ char *current_timestamp()
     return buffer;
 }
 
-/**
- * Schreibt den Anfang eines HTML-Dokuments mit einfachem CSS-Layout.
- *
- * @param out    Die Ausgabedatei (FILE*), in die der Header geschrieben wird.
- * @param title  Der Titel für <title> und Überschrift <h1>.
- */
-void write_html_header(FILE *out, const char *title)
-{
-    fprintf(out,
-            "<!DOCTYPE html>\n"
-            "<html lang=\"de\">\n"
-            "<head>\n"
-            "  <meta charset=\"UTF-8\">\n"
-            "  <title>%s</title>\n"
-            "  <style>\n"
-            "    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }\n"
-            "    h1 { color: #333; border-bottom: 2px solid #666; padding-bottom: 5px; }\n"
-            "    h2 { color: #444; margin-top: 30px; }\n"
-            "    h3 { color: #555; margin-top: 15px; }\n"
-            "    pre { background: #fff; padding: 10px; border: 1px solid #ccc; overflow-x: auto; }\n"
-            "    .timestamp { font-size: 0.9em; color: #666; margin-bottom: 20px; }\n"
-            "    .section { background: #fff; padding: 15px; border-radius: 5px;\n"
-            "               box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }\n"
-            "    .eval { display: flex; gap: 20px; }\n"
-            "    .eval p { flex: 1; background: #eef; padding: 10px;\n"
-            "              border-radius: 3px; text-align: center; }\n"
-            "  </style>\n"
-            "</head>\n"
-            "<body>\n"
-            "<h1>%s</h1>\n",
-            title, title);
+uint64_t prompt_for_offset(const char *image) {
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "mmls \"%s\"", image);
+    printf("--- Partitionstabelle ---\n");
+    system(cmd);
+
+    char input[64];
+    printf("\n[?] Bitte Offset der Basic Data Partition eingeben: ");
+    fgets(input, sizeof(input), stdin);
+    return strtoull(input, NULL, 10);
 }
 
-/**
- * Schreibt das schließende HTML-Tag-Paar für das Dokument.
- *
- * @param out  Die Ausgabedatei (FILE*), in die der Footer geschrieben wird.
- */
-void write_html_footer(FILE *out)
-{
-    fprintf(out, "</body>\n</html>\n");
+void prompt_and_run_fls(const char *image, uint64_t offset, char *inode_out, const char *description) {
+    char cmd[CMD_SIZE], input[32];
+    printf("\n--- %s ---\n", description);
+    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s\n", offset, image);
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
+    system(cmd);
+    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;
+    strncpy(inode_out, input, 31);
 }
 
-/**
- * Hauptprogramm: Extrahiert Windows-Hives, analysiert sie mit Regripper
- * und generiert einen HTML-Report mit Systeminformationen.
- *
- * Usage: ./winscope <image.dd> <compname> <username> <output_dir>
- *
- * @param argc  Anzahl der Kommandozeilenargumente.
- * @param argv  Argument-Liste:
- *              argv[1] = Pfad zum Image (RAW dd-Datei),
- *              argv[2] = Erwarteter Computername,
- *              argv[3] = Erwarteter Benutzername,
- *              argv[4] = Ausgabe-Verzeichnis für Report und Hive-Dateien.
- * @return      0 bei Erfolg, 1 bei Fehlern.
- */
-int main(int argc, char *argv[])
-{
-    if (argc != 5)
-    {
-        fprintf(stderr, "Usage: %s <image.dd> <compname> <username> <output_dir>\n", argv[0]);
-        return 1;
+void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char *inode, char *next_inode_out, const char *description) {
+    char cmd[CMD_SIZE], input[32];
+    printf("\n--- %s ---\n", description);
+    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s %s\n", offset, image, inode);
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode);
+    system(cmd);
+    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
+    fgets(input, sizeof(input), stdin);
+    input[strcspn(input, "\n")] = 0;
+    strncpy(next_inode_out, input, 31);
+}
+
+void write_html_header(FILE *f, const char *expected_user, const char *expected_comp) {
+    fprintf(f, "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>WinScope Report</title><style>body{font-family:sans-serif;margin:20px;}pre{background:#eee;padding:10px;border:1px solid #ccc;} .ok{color:green;} .fail{color:red;}</style></head><body>");
+    fprintf(f, "<h1>WinScope Report</h1><p>Erstellt: %s</p>", current_timestamp());
+    fprintf(f, "<p>Erwarteter Computername: <strong>%s</strong></p>", expected_comp);
+    fprintf(f, "<p>Erwarteter Benutzername: <strong>%s</strong></p>\n", expected_user);
+}
+
+void write_html_footer(FILE *f) {
+    fprintf(f, "</body></html>\n");
+}
+
+void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, const char *section_title, const char *output_dir) {
+    char hive_full[CMD_SIZE];
+    snprintf(hive_full, sizeof(hive_full), "%s/%s", output_dir, hive_path);
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "regripper -r \"%s\" -p %s", hive_full, plugin);
+    char *result = run_command(cmd);
+    fprintf(f, "<h2>%s (%s)</h2><pre>%s</pre>\n", section_title, plugin, result ? result : "(keine Ausgabe)");
+
+    // Vergleich am Ende vorbereiten
+    if (strcmp(plugin, "compname") == 0 && result) {
+        if (strstr(result, output_dir)) {
+            fprintf(f, "<p class='ok'>[✓] Computername stimmt mit Erwartung überein.</p>");
+        } else {
+            fprintf(f, "<p class='fail'>[✗] Computername stimmt NICHT mit Erwartung überein.</p>");
+        }
     }
-    const char *image = argv[1];
-    const char *exp_comp = argv[2];
-    const char *exp_user = argv[3];
-    const char *out_dir = argv[4];
+    if (strcmp(plugin, "profilelist") == 0 && result) {
+        if (strstr(result, output_dir)) {
+            fprintf(f, "<p class='ok'>[✓] Benutzername stimmt mit Erwartung überein.</p>");
+        } else {
+            fprintf(f, "<p class='fail'>[✗] Benutzername stimmt NICHT mit Erwartung überein.</p>");
+        }
+    }
 
+    free(result);
+}
+
+void run_command_section(FILE *f, const char *image, uint64_t offset) {
     char cmd[CMD_SIZE];
 
-    // 1) Hive-Extraktion
-    if (snprintf(cmd, CMD_SIZE,
-                 "icat -r %s %s > %s/SYSTEM.hive",
-                 image, PATH_SYSTEM_HIVE, out_dir) >= CMD_SIZE)
-    {
-        fprintf(stderr, "ERROR: SYSTEM hive extraction command too long\n");
+    snprintf(cmd, sizeof(cmd), "mmls \"%s\"", image);
+    char *mmls = run_command(cmd);
+    fprintf(f, "<h2>Partitionstabelle (mmls)</h2><pre>%s</pre>\n", mmls ? mmls : "(keine Ausgabe)");
+    free(mmls);
+
+    snprintf(cmd, sizeof(cmd), "fsstat -o %" PRIu64 " \"%s\"", offset, image);
+    char *fsstat = run_command(cmd);
+    fprintf(f, "<h2>Filesystem-Statistik (fsstat)</h2><pre>%s</pre>\n", fsstat ? fsstat : "(keine Ausgabe)");
+    free(fsstat);
+
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
+    char *fls = run_command(cmd);
+    fprintf(f, "<h2>Dateisystemstruktur (fls)</h2><pre>%s</pre>\n", fls ? fls : "(keine Ausgabe)");
+    free(fls);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <image.dd> <expected_user> <expected_comp> <output_dir>\n", argv[0]);
         return 1;
     }
+
+    const char *image = argv[1];
+    const char *exp_user = argv[2];
+    const char *exp_comp = argv[3];
+    const char *out_dir = argv[4];
+
+    char inode_windows[32], inode_system32[32], inode_config[32];
+    char inode_system[32], inode_software[32];
+
+    uint64_t offset = prompt_for_offset(image);
+
+    prompt_and_run_fls(image, offset, inode_windows, "Windows-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_windows, inode_system32, "System32-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_system32, inode_config, "config-Verzeichnis");
+    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_system, "SYSTEM-Datei");
+    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_software, "SOFTWARE-Datei");
+
+    char cmd[CMD_SIZE];
+    snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SYSTEM.hive\"", offset, image, inode_system, out_dir);
+    system(cmd);
+    snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SOFTWARE.hive\"", offset, image, inode_software, out_dir);
     system(cmd);
 
-    if (snprintf(cmd, CMD_SIZE,
-                 "icat -r %s %s > %s/SOFTWARE.hive",
-                 image, PATH_SOFTWARE_HIVE, out_dir) >= CMD_SIZE)
-    {
-        fprintf(stderr, "ERROR: SOFTWARE hive extraction command too long\n");
-        return 1;
-    }
-    system(cmd);
-
-    // 2) Regripper auf den extrahierten Hives
-    char path_system[CMD_SIZE], path_software[CMD_SIZE];
-    snprintf(path_system, CMD_SIZE, "%s/SYSTEM.hive", out_dir);
-    snprintf(path_software, CMD_SIZE, "%s/SOFTWARE.hive", out_dir);
-
-    if (snprintf(cmd, CMD_SIZE,
-                 "regripper -r %s -p compname,usbtor,usbdevices",
-                 path_system) >= CMD_SIZE)
-    {
-        fprintf(stderr, "ERROR: Regripper SYSTEM command too long\n");
-        return 1;
-    }
-    char *out_ripper_sys = run_command(cmd);
-
-    if (snprintf(cmd, CMD_SIZE,
-                 "regripper -r %s -p profillist,volinfocache,portdev",
-                 path_software) >= CMD_SIZE)
-    {
-        fprintf(stderr, "ERROR: Regripper SOFTWARE command too long\n");
-        return 1;
-    }
-    char *out_ripper_soft = run_command(cmd);
-
-    // 3) Sleuth Kit-Systeminfos
-    snprintf(cmd, CMD_SIZE, "mmls %s", image);
-    char *out_mmls = run_command(cmd);
-    snprintf(cmd, CMD_SIZE, "fsstat %s", image);
-    char *out_fsstat = run_command(cmd);
-    snprintf(cmd, CMD_SIZE, "fls -r %s", image);
-    char *out_fls = run_command(cmd);
-
-    // 4) HTML-Report schreiben
-    char report_path[CMD_SIZE];
-    snprintf(report_path, CMD_SIZE, "%s/winscope_report.html", out_dir);
-
-    FILE *html = fopen(report_path, "w");
-    if (!html)
-    {
+    char html_path[CMD_SIZE];
+    snprintf(html_path, sizeof(html_path), "%s/winscope_report.html", out_dir);
+    FILE *html = fopen(html_path, "w");
+    if (!html) {
         perror("fopen");
         return 1;
     }
 
-    write_html_header(html, "WinScope Report");
-    fprintf(html, "<div class=\"timestamp\">Erstellt am: %s</div>\n", current_timestamp());
+    write_html_header(html, exp_user, exp_comp);
+    run_command_section(html, image, offset);
 
-    // 1. Hive-Analyse
-    fprintf(html, "<div class=\"section\">\n");
-    fprintf(html, "  <h2>1. Hive-Analyse</h2>\n");
-    fprintf(html, "  <h3>1.1 SYSTEM (%s)</h3>\n", PATH_SYSTEM_HIVE);
-    fprintf(html, "  <pre>%s</pre>\n", out_ripper_sys);
-    fprintf(html, "  <h3>1.2 SOFTWARE (%s)</h3>\n", PATH_SOFTWARE_HIVE);
-    fprintf(html, "  <pre>%s</pre>\n", out_ripper_soft);
-    fprintf(html, "</div>\n");
+    fprintf(html, "<h2>SYSTEM Hive Analyse</h2>");
+    run_plugin_to_html(html, "SYSTEM.hive", "compname", "Computername", out_dir);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbstor", "USB Historie", out_dir);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbdevices", "USB Geräte", out_dir);
 
-    // 2. Systeminfos
-    fprintf(html, "<div class=\"section\">\n");
-    fprintf(html, "  <h2>2. Systeminfos</h2>\n");
-    fprintf(html, "  <h3>2.1 mmls</h3>\n<pre>%s</pre>\n", out_mmls);
-    fprintf(html, "  <h3>2.2 fsstat</h3>\n<pre>%s</pre>\n", out_fsstat);
-    fprintf(html, "  <h3>2.3 fls</h3>\n<pre>%s</pre>\n", out_fls);
-    fprintf(html, "</div>\n");
-
-    // 3. Evaluierung
-    int comp_ok = (strstr(out_ripper_sys, exp_comp) != NULL);
-    int user_ok = (strstr(out_ripper_soft, exp_user) != NULL);
-    fprintf(html, "<div class=\"section eval\">\n");
-    fprintf(html, "  <p><strong>Rechner:</strong> %s – %s</p>\n",
-            exp_comp, comp_ok ? " korrekt" : " falsch");
-    fprintf(html, "  <p><strong>User:</strong>    %s – %s</p>\n",
-            exp_user, user_ok ? " korrekt" : " falsch");
-    fprintf(html, "</div>\n");
+    fprintf(html, "<h2>SOFTWARE Hive Analyse</h2>");
+    run_plugin_to_html(html, "SOFTWARE.hive", "profilelist", "Benutzerprofile", out_dir);
+    run_plugin_to_html(html, "SOFTWARE.hive", "volinfocache", "VolumeInfoCache", out_dir);
+    run_plugin_to_html(html, "SOFTWARE.hive", "portdev", "Port Devices", out_dir);
 
     write_html_footer(html);
     fclose(html);
 
-    // Aufräumen
-    free(out_ripper_sys);
-    free(out_ripper_soft);
-    free(out_mmls);
-    free(out_fsstat);
-    free(out_fls);
-
-    printf("Report gespeichert in: %s\n", report_path);
+    printf("\n[+] SYSTEM und SOFTWARE extrahiert und HTML-Report gespeichert unter: %s\n", html_path);
     return 0;
 }
