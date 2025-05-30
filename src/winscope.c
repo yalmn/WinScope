@@ -57,7 +57,7 @@ void prompt_and_run_fls(const char *image, uint64_t offset, char *inode_out, con
     printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
     fgets(input, sizeof(input), stdin);
     input[strcspn(input, "\n")] = 0;
-    strncpy(inode_out, input, 31);
+    strncpy(inode_out, input, sizeof(input));
 }
 
 void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char *inode, char *next_inode_out, const char *description) {
@@ -69,7 +69,7 @@ void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char 
     printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
     fgets(input, sizeof(input), stdin);
     input[strcspn(input, "\n")] = 0;
-    strncpy(next_inode_out, input, 31);
+    strncpy(next_inode_out, input, sizeof(input));
 }
 
 void write_html_header(FILE *f, const char *expected_user, const char *expected_comp) {
@@ -91,7 +91,6 @@ void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, cons
     char *result = run_command(cmd);
     fprintf(f, "<h2>%s (%s)</h2><pre>%s</pre>\n", section_title, plugin, result ? result : "(keine Ausgabe)");
 
-    // Vergleich am Ende vorbereiten
     if (strcmp(plugin, "compname") == 0 && result) {
         if (strstr(result, output_dir)) {
             fprintf(f, "<p class='ok'>[✓] Computername stimmt mit Erwartung überein.</p>");
@@ -166,7 +165,6 @@ int main(int argc, char *argv[]) {
     }
 
     write_html_header(html, exp_user, exp_comp);
-    run_command_section(html, image, offset);
 
     fprintf(html, "<h2>SYSTEM Hive Analyse</h2>");
     run_plugin_to_html(html, "SYSTEM.hive", "compname", "Computername", out_dir);
@@ -178,6 +176,7 @@ int main(int argc, char *argv[]) {
     run_plugin_to_html(html, "SOFTWARE.hive", "volinfocache", "VolumeInfoCache", out_dir);
     run_plugin_to_html(html, "SOFTWARE.hive", "portdev", "Port Devices", out_dir);
 
+    run_command_section(html, image, offset);
     write_html_footer(html);
     fclose(html);
 
