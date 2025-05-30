@@ -57,7 +57,8 @@ void prompt_and_run_fls(const char *image, uint64_t offset, char *inode_out, con
     printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
     fgets(input, sizeof(input), stdin);
     input[strcspn(input, "\n")] = 0;
-    strncpy(inode_out, input, sizeof(input));
+    strncpy(inode_out, input, 31);
+    inode_out[31] = '\0';
 }
 
 void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char *inode, char *next_inode_out, const char *description) {
@@ -69,7 +70,8 @@ void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char 
     printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
     fgets(input, sizeof(input), stdin);
     input[strcspn(input, "\n")] = 0;
-    strncpy(next_inode_out, input, sizeof(input));
+    strncpy(next_inode_out, input, 31);
+    next_inode_out[31] = '\0';
 }
 
 void write_html_header(FILE *f, const char *expected_user, const char *expected_comp) {
@@ -83,7 +85,7 @@ void write_html_footer(FILE *f) {
     fprintf(f, "</body></html>\n");
 }
 
-void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, const char *section_title, const char *output_dir) {
+void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, const char *section_title, const char *output_dir, const char *expected_value) {
     char hive_full[CMD_SIZE];
     snprintf(hive_full, sizeof(hive_full), "%s/%s", output_dir, hive_path);
     char cmd[CMD_SIZE];
@@ -91,18 +93,11 @@ void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, cons
     char *result = run_command(cmd);
     fprintf(f, "<h2>%s (%s)</h2><pre>%s</pre>\n", section_title, plugin, result ? result : "(keine Ausgabe)");
 
-    if (strcmp(plugin, "compname") == 0 && result) {
-        if (strstr(result, output_dir)) {
-            fprintf(f, "<p class='ok'>[✓] Computername stimmt mit Erwartung überein.</p>");
+    if (expected_value && result && (strcmp(plugin, "compname") == 0 || strcmp(plugin, "profilelist") == 0)) {
+        if (strstr(result, expected_value)) {
+            fprintf(f, "<p class='ok'>[✓] %s stimmt mit Erwartung überein.</p>", plugin);
         } else {
-            fprintf(f, "<p class='fail'>[✗] Computername stimmt NICHT mit Erwartung überein.</p>");
-        }
-    }
-    if (strcmp(plugin, "profilelist") == 0 && result) {
-        if (strstr(result, output_dir)) {
-            fprintf(f, "<p class='ok'>[✓] Benutzername stimmt mit Erwartung überein.</p>");
-        } else {
-            fprintf(f, "<p class='fail'>[✗] Benutzername stimmt NICHT mit Erwartung überein.</p>");
+            fprintf(f, "<p class='fail'>[✗] %s stimmt NICHT mit Erwartung überein.</p>", plugin);
         }
     }
 
@@ -167,14 +162,14 @@ int main(int argc, char *argv[]) {
     write_html_header(html, exp_user, exp_comp);
 
     fprintf(html, "<h2>SYSTEM Hive Analyse</h2>");
-    run_plugin_to_html(html, "SYSTEM.hive", "compname", "Computername", out_dir);
-    run_plugin_to_html(html, "SYSTEM.hive", "usbstor", "USB Historie", out_dir);
-    run_plugin_to_html(html, "SYSTEM.hive", "usbdevices", "USB Geräte", out_dir);
+    run_plugin_to_html(html, "SYSTEM.hive", "compname", "Computername", out_dir, exp_comp);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbstor", "USB Historie", out_dir, NULL);
+    run_plugin_to_html(html, "SYSTEM.hive", "usbdevices", "USB Geräte", out_dir, NULL);
 
     fprintf(html, "<h2>SOFTWARE Hive Analyse</h2>");
-    run_plugin_to_html(html, "SOFTWARE.hive", "profilelist", "Benutzerprofile", out_dir);
-    run_plugin_to_html(html, "SOFTWARE.hive", "volinfocache", "VolumeInfoCache", out_dir);
-    run_plugin_to_html(html, "SOFTWARE.hive", "portdev", "Port Devices", out_dir);
+    run_plugin_to_html(html, "SOFTWARE.hive", "profilelist", "Benutzerprofile", out_dir, exp_user);
+    run_plugin_to_html(html, "SOFTWARE.hive", "volinfocache", "VolumeInfoCache", out_dir, NULL);
+    run_plugin_to_html(html, "SOFTWARE.hive", "portdev", "Port Devices", out_dir, NULL);
 
     run_command_section(html, image, offset);
     write_html_footer(html);
