@@ -6,10 +6,12 @@
 #include <time.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #define CMD_SIZE 2048
 #define BUF_SIZE 8192
 
+// Führt Shell-Befehl aus und gibt Ausgabe als String zurück (dynamisch alloziert, muss mit free() freigegeben werden)
 char *run_command(const char *cmd) {
     FILE *fp = popen(cmd, "r");
     if (!fp) return NULL;
@@ -28,6 +30,7 @@ char *run_command(const char *cmd) {
     return output;
 }
 
+// Gibt aktuellen Timestamp als String zurück
 char *current_timestamp() {
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
@@ -36,44 +39,106 @@ char *current_timestamp() {
     return buffer;
 }
 
-uint64_t prompt_for_offset(const char *image) {
+// Entfernt führende und abschließende Whitespaces (in-place)
+void trim(char *str) {
+    char *start = str;
+    while (isspace((unsigned char)*start)) start++;
+    if (start != str) memmove(str, start, strlen(start) + 1);
+
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) *end-- = '\0';
+}
+
+// Case-insensitive Stringvergleich
+int strcasecmp_custom(const char *a, const char *b) {
+    while (*a && *b) {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+            return tolower((unsigned char)*a) - tolower((unsigned char)*b);
+        a++;
+        b++;
+    }
+    return *a - *b;
+}
+
+// Sucht nach einem Eintrag mit Namen target in fls-Ausgabe und extrahiert die Inode korrekt
+int find_inode_by_name(const char *fls_output, const char *target, char *inode_out, size_t inode_out_size) {
+    char *copy = strdup(fls_output);
+    char *line = strtok(copy, "\n");
+    while (line) {
+        char *colon = strchr(line, ':');
+        if (colon && *(colon + 1)) {
+            char namebuf[128];
+            strncpy(namebuf, colon + 1, sizeof(namebuf) - 1);
+            namebuf[sizeof(namebuf) - 1] = '\0';
+            trim(namebuf);
+
+            if (strcasecmp_custom(namebuf, target) == 0) {
+                // Extrahiere die Inode (der Block nach dem letzten Leerzeichen vor dem Doppelpunkt)
+                char *pre_colon = colon;
+                while (pre_colon > line && !isspace((unsigned char)*(pre_colon - 1))) {
+                    pre_colon--;
+                }
+                while (pre_colon > line && isspace((unsigned char)*(pre_colon - 1))) {
+                    pre_colon--;
+                }
+                size_t inode_len = colon - pre_colon;
+                if (inode_len < inode_out_size && inode_len > 0) {
+                    strncpy(inode_out, pre_colon, inode_len);
+                    inode_out[inode_len] = '\0';
+                    free(copy);
+                    return 1;
+                }
+            }
+        }
+        line = strtok(NULL, "\n");
+    }
+    free(copy);
+    return 0;
+}
+
+// Sucht automatisch die Startsektor-Nummer (Offset) der BDP in mmls-Ausgabe
+uint64_t find_bdp_offset(const char *image) {
     char cmd[CMD_SIZE];
     snprintf(cmd, sizeof(cmd), "mmls \"%s\"", image);
-    printf("--- Partitionstabelle ---\n");
-    system(cmd);
+    char *output = run_command(cmd);
+    if (!output) {
+        fprintf(stderr, "Fehler beim Ausführen von mmls!\n");
+        exit(1);
+    }
 
-    char input[64];
-    printf("\n[?] Bitte Offset der Basic Data Partition eingeben: ");
-    fgets(input, sizeof(input), stdin);
-    return strtoull(input, NULL, 10);
+    uint64_t offset = 0;
+    char *saveptr1;
+    char *line = strtok_r(output, "\n", &saveptr1);
+    while (line) {
+        if (strstr(line, "Basic data partition")) {
+            // Zerlege die Zeile in Tokens (ID  Start  End  Length  Desc ...)
+            char *token;
+            int col = 0;
+            char *saveptr2;
+            token = strtok_r(line, " \t", &saveptr2);
+            while (token != NULL) {
+                col++;
+                // In Spalte 3 steht der Offset (Start)
+                if (col == 3) {
+                    offset = strtoull(token, NULL, 10);
+                    break;
+                }
+                token = strtok_r(NULL, " \t", &saveptr2);
+            }
+            break;
+        }
+        line = strtok_r(NULL, "\n", &saveptr1);
+    }
+    free(output);
+
+    if (offset == 0) {
+        fprintf(stderr, "Basic Data Partition Offset konnte nicht automatisch gefunden werden!\n");
+        exit(1);
+    }
+    return offset;
 }
 
-void prompt_and_run_fls(const char *image, uint64_t offset, char *inode_out, const char *description) {
-    char cmd[CMD_SIZE], input[32];
-    printf("\n--- %s ---\n", description);
-    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s\n", offset, image);
-    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
-    system(cmd);
-    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
-    fgets(input, sizeof(input), stdin);
-    input[strcspn(input, "\n")] = 0;
-    strncpy(inode_out, input, 31);
-    inode_out[31] = '\0';
-}
-
-void prompt_and_run_fls_on_inode(const char *image, uint64_t offset, const char *inode, char *next_inode_out, const char *description) {
-    char cmd[CMD_SIZE], input[32];
-    printf("\n--- %s ---\n", description);
-    printf("Befehl: fls -o %" PRIu64 " -f ntfs %s %s\n", offset, image, inode);
-    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode);
-    system(cmd);
-    printf("\n[?] Bitte Inode für '%s' eingeben: ", description);
-    fgets(input, sizeof(input), stdin);
-    input[strcspn(input, "\n")] = 0;
-    strncpy(next_inode_out, input, 31);
-    next_inode_out[31] = '\0';
-}
-
+// HTML-Header
 void write_html_header(FILE *f, const char *expected_user, const char *expected_comp) {
     fprintf(f, "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>WinScope Report</title><style>body{font-family:sans-serif;margin:20px;}pre{background:#eee;padding:10px;border:1px solid #ccc;} .ok{color:green;} .fail{color:red;}</style></head><body>");
     fprintf(f, "<h1>WinScope Report</h1><p>Erstellt: %s</p>", current_timestamp());
@@ -81,10 +146,12 @@ void write_html_header(FILE *f, const char *expected_user, const char *expected_
     fprintf(f, "<p>Erwarteter Benutzername: <strong>%s</strong></p>\n", expected_user);
 }
 
+// HTML-Footer
 void write_html_footer(FILE *f) {
     fprintf(f, "</body></html>\n");
 }
 
+// RegRipper-Plugins ausführen und Ergebnis ins HTML schreiben
 void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, const char *section_title, const char *output_dir, const char *expected_value) {
     char hive_full[CMD_SIZE];
     snprintf(hive_full, sizeof(hive_full), "%s/%s", output_dir, hive_path);
@@ -104,6 +171,7 @@ void run_plugin_to_html(FILE *f, const char *hive_path, const char *plugin, cons
     free(result);
 }
 
+// Weitere Zusatzinfos ins HTML (Partitionstabelle, fsstat, fls)
 void run_command_section(FILE *f, const char *image, uint64_t offset) {
     char cmd[CMD_SIZE];
 
@@ -136,16 +204,58 @@ int main(int argc, char *argv[]) {
 
     char inode_windows[32], inode_system32[32], inode_config[32];
     char inode_system[32], inode_software[32];
-
-    uint64_t offset = prompt_for_offset(image);
-
-    prompt_and_run_fls(image, offset, inode_windows, "Windows-Verzeichnis");
-    prompt_and_run_fls_on_inode(image, offset, inode_windows, inode_system32, "System32-Verzeichnis");
-    prompt_and_run_fls_on_inode(image, offset, inode_system32, inode_config, "config-Verzeichnis");
-    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_system, "SYSTEM-Datei");
-    prompt_and_run_fls_on_inode(image, offset, inode_config, inode_software, "SOFTWARE-Datei");
-
     char cmd[CMD_SIZE];
+    char *fls_out;
+
+    // Offset wird automatisch bestimmt
+    uint64_t offset = find_bdp_offset(image);
+    printf("[i] Automatisch ermittelter Offset der Basic Data Partition: %" PRIu64 "\n", offset);
+
+    // 1. Suche "Windows" im Root
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\"", offset, image);
+    fls_out = run_command(cmd);
+    if (!find_inode_by_name(fls_out, "Windows", inode_windows, sizeof(inode_windows))) {
+        fprintf(stderr, "Windows-Verzeichnis nicht gefunden!\n");
+        free(fls_out);
+        return 1;
+    }
+    free(fls_out);
+
+    // 2. Suche "System32" in Windows
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode_windows);
+    fls_out = run_command(cmd);
+    if (!find_inode_by_name(fls_out, "System32", inode_system32, sizeof(inode_system32))) {
+        fprintf(stderr, "System32-Verzeichnis nicht gefunden!\n");
+        free(fls_out);
+        return 1;
+    }
+    free(fls_out);
+
+    // 3. Suche "config" in System32
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode_system32);
+    fls_out = run_command(cmd);
+    if (!find_inode_by_name(fls_out, "config", inode_config, sizeof(inode_config))) {
+        fprintf(stderr, "config-Verzeichnis nicht gefunden!\n");
+        free(fls_out);
+        return 1;
+    }
+    free(fls_out);
+
+    // 4. Suche "SYSTEM" und "SOFTWARE" in config
+    snprintf(cmd, sizeof(cmd), "fls -o %" PRIu64 " -f ntfs \"%s\" %s", offset, image, inode_config);
+    fls_out = run_command(cmd);
+    if (!find_inode_by_name(fls_out, "SYSTEM", inode_system, sizeof(inode_system))) {
+        fprintf(stderr, "SYSTEM-Datei nicht gefunden!\n");
+        free(fls_out);
+        return 1;
+    }
+    if (!find_inode_by_name(fls_out, "SOFTWARE", inode_software, sizeof(inode_software))) {
+        fprintf(stderr, "SOFTWARE-Datei nicht gefunden!\n");
+        free(fls_out);
+        return 1;
+    }
+    free(fls_out);
+
     snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SYSTEM.hive\"", offset, image, inode_system, out_dir);
     system(cmd);
     snprintf(cmd, sizeof(cmd), "icat -f ntfs -o %" PRIu64 " \"%s\" %s > \"%s/SOFTWARE.hive\"", offset, image, inode_software, out_dir);
