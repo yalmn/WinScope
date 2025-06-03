@@ -1,66 +1,79 @@
 # WinScope
 
-**WinScope** ist ein Kommandozeilen-Tool zur forensischen Metaanalyse von Windows-Disk-Images. Das Tool extrahiert Windows-Registry-Hives, führt RegRipper-Plugins aus, sammelt Systeminformationen mit Sleuth Kit und erstellt einen ausführlichen HTML-Report inklusive Zeitstempel und Evaluierung.
+**WinScope** ist ein forensisches Kommandozeilen-Tool zur automatisierten Metaanalyse von Windows-Disk-Images.  
+Es extrahiert automatisch Registry-Hives, führt gezielte RegRipper-Plugins aus, analysiert das Dateisystem mit Sleuth Kit  
+und erstellt einen umfangreichen HTML-Report mit Bewertung erwarteter Artefakte.
 
-## Merkmale
+## 🧰 Merkmale
 
-- **Hive-Extraktion**: Liest SYSTEM- und SOFTWARE-Hive direkt aus dem Image via `icat`.
-- **RegRipper-Analyse**: Führt ausgewählte Plugins aus (`compname`, `usbtor`, `usbdevices`, `profillist`, `volinfocache`, `portdev`).
-- **Sleuth Kit-Systeminfos**: Verwendet `mmls`, `fsstat` und `fls` zur Dateisystem-Analyse.
-- **HTML-Report**: Generiert einen übersichtlichen Report mit Zeitstempel, Hive-Resultaten, Systeminfos und einer Evaluierung, ob Rechnername und Benutzername mit den Erwartungen übereinstimmen.
+- 🔍 **Automatische Hive-Suche & Extraktion**  
+  Findet SYSTEM- und SOFTWARE-Hives schrittweise per `fls` und extrahiert sie direkt mit `icat`.
 
-## Voraussetzungen
+- 🧠 **Intelligente RegRipper-Analyse**  
+  Führt spezifische Plugins aus und prüft, ob Rechnername und Benutzername mit Erwartungen übereinstimmen.
 
-- Linux-Umgebung mit folgendem Software-Stack:
-  - `gcc` (GNU C Compiler)
-  - `icat`, `mmls`, `fsstat`, `fls` (The Sleuth Kit)
-  - Perl mit RegRipper (`rip.pl`) und die Plugins:
-    - `compname`, `usbtor`, `usbdevices` für SYSTEM-Hive
-    - `profillist`, `volinfocache`, `portdev` für SOFTWARE-Hive
+- 📂 **Sleuth Kit-Systemanalyse**  
+  Nutzt `mmls`, `fsstat` und `fls`, um Partitionen und Dateisystemstruktur zu dokumentieren.
 
-## Verzeichnisstruktur
+- 📝 **HTML-Report mit Bewertung**  
+  Zeitgestempelter Bericht mit übersichtlicher Darstellung aller Ergebnisse und farblicher Bewertung.
 
-```
+## ⚙️ Voraussetzungen
+
+- Linux-System mit installierter Software:
+  - `gcc` (GNU Compiler Collection)
+  - `mmls`, `fls`, `fsstat`, `icat` (aus The Sleuth Kit)
+  - `perl` + RegRipper (`rip.pl`) mit Plugins:
+    - SYSTEM: `compname`, `usbstor`, `usbdevices`
+    - SOFTWARE: `profilelist`, `volinfocache`, `portdev`
+
+## 📁 Projektstruktur
+
 winscope/
 ├── src/
-│   └── winscope.c     # Quellcode
-├── Makefile           # Build- und Clean-Regeln
-├── install.sh         # Installationsskript
-└── README.md          # Projektbeschreibung
-```
+│ └── winscope.c # Hauptprogramm in C
+├── Makefile # Build-Regeln
+├── install.sh # Optionales Installationsskript
+└── README.md # Diese Beschreibung
 
-## Build & Installation
+## 🏗️ Build & Installation
 
-1. **Kompilieren**
-   ```bash
-   cd winscope
-   make all
-   ```
-2. **Installation** (optional, installiert `winscope` nach `/usr/local/bin`)
-   ```bash
-   sudo ./install.sh
-   ```
+cd winscope
+make all # kompiliert winscope
+sudo ./install.sh # (optional) installiert nach /usr/local/bin
 
-## Nutzung
+## 🚀 Nutzung
 
-```bash
-Usage: winscope <image.dd> <compname> <username> <output_dir>
-```
+winscope <image.dd> <username> <compname> <output_dir>
 
-- `<image.dd>`: Pfad zum Windows-Disk-Image (RAW/`.dd`).
-- `<compname>`: Erwarteter Rechnername (Registry-Value aus SYSTEM-Hive).
-- `<username>`: Erwarteter Benutzername (aus SOFTWARE-Hive).
-- `<output_dir>`: Existierendes Verzeichnis, in dem der Report abgelegt wird.
 
-### Beispiel
+- `<image.dd>`: Pfad zum Windows-RAW-Image (z. B. `.dd`)
+- `<username>`: Erwarteter Benutzername (aus SOFTWARE-Hive)
+- `<compname>`: Erwarteter Rechnername (aus SYSTEM-Hive)
+- `<output_dir>`: Zielverzeichnis für extrahierte Hives und den HTML-Report
 
-```bash
-./winscope case01.dd CORP-PC01 alice /home/user/reports
-```
+## 🧪 Beispiel
 
-- Erzeugt `/home/user/reports/winscope_report.html`
-- Der Report enthält:
-  - **Erstellt am:** Zeitstempel
-  - **1. Hive-Analyse:** Ergebnisse der RegRipper-Plugins
-  - **2. Systeminfos:** Ausgabe von `mmls`, `fsstat` und `fls`
-  - **3. Evaluierung:** Abgleich von Rechner- und Benutzernamen
+./winscope case01.dd alice CORP-PC01 reports/
+
+
+Erzeugt:
+
+- `reports/SYSTEM.hive`
+- `reports/SOFTWARE.hive`
+- `reports/winscope_report.html`
+
+## 📄 HTML-Report enthält
+
+1. Hive-Analyse: Ausgabe der RegRipper-Plugins  
+2. Dateisysteminformationen: Ausgabe von `mmls`, `fsstat`, `fls`  
+3. Evaluierung: Abgleich von Rechner- und Benutzernamen mit Vorgaben
+
+## 🔎 Hinweise
+
+- Der Offset der Basic Data Partition wird automatisch über `mmls` bestimmt.
+- Die Registry-Dateien werden rekursiv über folgende Pfade gesucht:  
+  Windows → System32 → config → SYSTEM, SOFTWARE
+- Die Plugin-Ausgabe wird direkt im HTML angezeigt und bewertet.
+
+## 📬 Lizenz
