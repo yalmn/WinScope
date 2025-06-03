@@ -4,21 +4,21 @@
 Es extrahiert automatisch Registry-Hives, führt gezielte RegRipper-Plugins aus, analysiert das Dateisystem mit Sleuth Kit  
 und erstellt einen umfangreichen HTML-Report mit Bewertung erwarteter Artefakte.
 
-## 🧰 Merkmale
+## Merkmale
 
-- 🔍 **Automatische Hive-Suche & Extraktion**  
+- **Automatische Hive-Suche & Extraktion**  
   Findet SYSTEM- und SOFTWARE-Hives schrittweise per `fls` und extrahiert sie direkt mit `icat`.
 
-- 🧠 **Intelligente RegRipper-Analyse**  
+- **Intelligente RegRipper-Analyse**  
   Führt spezifische Plugins aus und prüft, ob Rechnername und Benutzername mit Erwartungen übereinstimmen.
 
-- 📂 **Sleuth Kit-Systemanalyse**  
+- **Sleuth Kit-Systemanalyse**  
   Nutzt `mmls`, `fsstat` und `fls`, um Partitionen und Dateisystemstruktur zu dokumentieren.
 
-- 📝 **HTML-Report mit Bewertung**  
+- **HTML-Report mit Bewertung**  
   Zeitgestempelter Bericht mit übersichtlicher Darstellung aller Ergebnisse und farblicher Bewertung.
 
-## ⚙️ Voraussetzungen
+## ⚙Voraussetzungen
 
 - Linux-System mit installierter Software:
   - `gcc` (GNU Compiler Collection)
@@ -27,7 +27,7 @@ und erstellt einen umfangreichen HTML-Report mit Bewertung erwarteter Artefakte.
     - SYSTEM: `compname`, `usbstor`, `usbdevices`
     - SOFTWARE: `profilelist`, `volinfocache`, `portdev`
 
-## 📁 Projektstruktur
+## Projektstruktur
 
 winscope/
 ├── src/
@@ -36,13 +36,13 @@ winscope/
 ├── install.sh # Optionales Installationsskript
 └── README.md # Diese Beschreibung
 
-## 🏗️ Build & Installation
+## Build & Installation
 
 cd winscope
 make all # kompiliert winscope
 sudo ./install.sh # (optional) installiert nach /usr/local/bin
 
-## 🚀 Nutzung
+## Nutzung
 
 winscope <image.dd> <username> <compname> <output_dir>
 
@@ -52,7 +52,7 @@ winscope <image.dd> <username> <compname> <output_dir>
 - `<compname>`: Erwarteter Rechnername (aus SYSTEM-Hive)
 - `<output_dir>`: Zielverzeichnis für extrahierte Hives und den HTML-Report
 
-## 🧪 Beispiel
+## Beispiel
 
 ./winscope case01.dd alice CORP-PC01 reports/
 
@@ -63,17 +63,17 @@ Erzeugt:
 - `reports/SOFTWARE.hive`
 - `reports/winscope_report.html`
 
-## 📄 HTML-Report enthält
+## HTML-Report enthält
 
 1. Hive-Analyse: Ausgabe der RegRipper-Plugins  
 2. Dateisysteminformationen: Ausgabe von `mmls`, `fsstat`, `fls`  
 3. Evaluierung: Abgleich von Rechner- und Benutzernamen mit Vorgaben
 
-## 🔎 Hinweise
+## Hinweise
 
 - Der Offset der Basic Data Partition wird automatisch über `mmls` bestimmt.
 - Die Registry-Dateien werden rekursiv über folgende Pfade gesucht:  
   Windows → System32 → config → SYSTEM, SOFTWARE
 - Die Plugin-Ausgabe wird direkt im HTML angezeigt und bewertet.
 
-## 📬 Lizenz
+## Lizenz
