@@ -18,7 +18,7 @@ und erstellt einen umfangreichen HTML-Report mit Bewertung erwarteter Artefakte.
 - **HTML-Report mit Bewertung**  
   Zeitgestempelter Bericht mit übersichtlicher Darstellung aller Ergebnisse und farblicher Bewertung.
 
-## ⚙Voraussetzungen
+## Voraussetzungen
 
 - Linux-System mit installierter Software:
   - `gcc` (GNU Compiler Collection)
