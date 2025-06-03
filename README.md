@@ -1,3 +1,5 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 # WinScope
 
 **WinScope** ist ein forensisches Kommandozeilen-Tool zur automatisierten Metaanalyse von Windows-Disk-Images.  
@@ -77,3 +79,5 @@ Erzeugt:
 - Die Plugin-Ausgabe wird direkt im HTML angezeigt und bewertet.
 
 ## Lizenz
+
+Dieses Projekt steht unter der [MIT License](LICENSE) © 2025 [yalmn](https://github.com/yalmn/)
