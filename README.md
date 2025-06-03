@@ -31,12 +31,12 @@ und erstellt einen umfangreichen HTML-Report mit Bewertung erwarteter Artefakte.
 
 ## Projektstruktur
 
-winscope/
-├── src/
-│ └── winscope.c # Hauptprogramm in C
-├── Makefile # Build-Regeln
-├── install.sh # Optionales Installationsskript
-└── README.md # Diese Beschreibung
+winscope/  
+├── src/  
+│   └── winscope.c         # Hauptprogramm in C  
+├── Makefile               # Build-Regeln  
+├── install.sh             # Optionales Installationsskript  
+└── README.md              # Diese Beschreibung  
 
 ## Build & Installation
 
