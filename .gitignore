@@ -1,0 +1,5 @@
+.DS_Store
+winscope
+*.hive
+winscope_report.html
+*.dSYM/
