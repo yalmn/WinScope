@@ -89,6 +89,15 @@ Erzeugt:
 - Schlägt ein einzelnes RegRipper-Plugin oder Sleuth-Kit-Tool fehl, steht der Exit-Code im Report.
 - Beim Abgleich zählt beim Benutzernamen nur der letzte Teil von `ProfileImagePath`, `alice` passt also nicht auf `alice2`.
 
+## Version 1
+
+Die alte Version bleibt verfügbar:
+
+- Release mit Binary: [WinScope v1.0.0](https://github.com/yalmn/WinScope/releases/tag/InitialRelease)
+- Quellcode: Branch [`v1`](https://github.com/yalmn/WinScope/tree/v1)
+
+Unterschiede zu 2.0.0: v1 kennt nur GPT-Images mit „Basic data partition“, vergleicht Namen als Teilstring mit Beachtung der Groß-/Kleinschreibung, berechnet keinen Hash und wird über `install.sh` installiert. Die Aufrufparameter sind gleich.
+
 ## Lizenz
 
 Dieses Projekt steht unter der [MIT License](LICENSE) © 2025 [yalmn](https://github.com/yalmn/)
