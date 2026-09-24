@@ -284,8 +284,9 @@ static void write_plugin(FILE *f, const struct plugin *pl, const char *out_dir,
     fprintf(f, "<h3>%s (%s)</h3>\n", pl->title, pl->name);
     write_pre(f, result, code);
 
-    if (pl->check != CHECK_NONE) {
-        const char *expected = pl->check == CHECK_COMPNAME ? exp_comp : exp_user;
+    // Abgleich nur, wenn ein Erwartungswert übergeben wurde
+    const char *expected = pl->check == CHECK_COMPNAME ? exp_comp : exp_user;
+    if (pl->check != CHECK_NONE && expected && *expected) {
         int ok = result && (pl->check == CHECK_COMPNAME
                             ? value_matches(result, "ComputerName", '=', 0, expected)
                             : value_matches(result, "Path", ':', 1, expected));
@@ -358,15 +359,22 @@ int main(int argc, char *argv[]) {
         argv++;
         argc--;
     }
-    if (argc != 5) {
-        fprintf(stderr, "Usage: winscope [--no-hash] <image.dd> <expected_user> <expected_comp> <output_dir>\n");
+    // Erwartungswerte sind optional: entweder <image> <out_dir> (kein Abgleich)
+    // oder <image> <user> <comp> <out_dir> (mit Abgleich).
+    const char *image, *out_dir;
+    const char *exp_user = NULL, *exp_comp = NULL;
+    if (argc == 3) {
+        image = argv[1];
+        out_dir = argv[2];
+    } else if (argc == 5) {
+        image = argv[1];
+        exp_user = argv[2];
+        exp_comp = argv[3];
+        out_dir = argv[4];
+    } else {
+        fprintf(stderr, "Usage: winscope [--no-hash] <image.dd> [<expected_user> <expected_comp>] <output_dir>\n");
         return 1;
     }
-
-    const char *image = argv[1];
-    const char *exp_user = argv[2];
-    const char *exp_comp = argv[3];
-    const char *out_dir = argv[4];
 
     if (!check_dependencies()) {
         fprintf(stderr, "[!] Abhängigkeiten unvollständig. Vorgang abgebrochen.\n");
@@ -446,8 +454,8 @@ int main(int argc, char *argv[]) {
     write_row(html, "Inode SYSTEM", inode_system);
     write_row(html, "Inode SOFTWARE", inode_software);
     write_row(html, "Sleuth Kit", tsk_version);
-    write_row(html, "Erwarteter Computername", exp_comp);
-    write_row(html, "Erwarteter Benutzername", exp_user);
+    write_row(html, "Erwarteter Computername", exp_comp ? exp_comp : "(nicht geprüft)");
+    write_row(html, "Erwarteter Benutzername", exp_user ? exp_user : "(nicht geprüft)");
     fputs("</table>\n", html);
 
     const char *current_hive = NULL;

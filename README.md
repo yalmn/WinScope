@@ -60,19 +60,24 @@ make install PREFIX=$HOME/.local  # ohne root
 ## Nutzung
 
 ```sh
-winscope [--no-hash] <image.dd> <username> <compname> <output_dir>
+winscope [--no-hash] <image.dd> [<username> <compname>] <output_dir>
 ```
 
 - `<image.dd>`: Windows-RAW-Image (ganze Platte oder einzelne Partition)
-- `<username>`: erwarteter Benutzername (Profilordner im SOFTWARE-Hive)
-- `<compname>`: erwarteter Rechnername (SYSTEM-Hive)
+- `<username>`: erwarteter Benutzername (Profilordner im SOFTWARE-Hive) — **optional**
+- `<compname>`: erwarteter Rechnername (SYSTEM-Hive) — **optional**
 - `<output_dir>`: Zielverzeichnis, wird bei Bedarf angelegt
 - `--no-hash`: SHA-256 des Images nicht berechnen (spart bei großen Images viel Zeit)
+
+`<username>` und `<compname>` werden nur zusammen angegeben. Ohne sie erstellt WinScope
+den Report ohne Soll-Ist-Abgleich (die `[✓]/[✗]`-Bewertung entfällt, die Plugin-Ausgaben
+erscheinen trotzdem).
 
 ## Beispiel
 
 ```sh
-winscope case01.dd alice CORP-PC01 reports/
+winscope case01.dd alice CORP-PC01 reports/   # mit Abgleich
+winscope case01.dd reports/                    # nur Report, ohne Abgleich
 ```
 
 Erzeugt:
