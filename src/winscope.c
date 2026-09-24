@@ -296,6 +296,61 @@ static void write_plugin(FILE *f, const struct plugin *pl, const char *out_dir,
     free(result);
 }
 
+// Prüft, ob ein Programm ausführbar ist. Enthält der Name einen '/', wird er als
+// Pfad direkt geprüft (z. B. WINSCOPE_RIP=/usr/share/regripper/rip.pl), sonst im PATH.
+static int program_in_path(const char *name) {
+    if (strchr(name, '/')) return access(name, X_OK) == 0;
+
+    const char *path = getenv("PATH");
+    if (!path || !*path) path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    char buf[PATH_SIZE];
+    for (const char *p = path; *p;) {
+        const char *colon = strchr(p, ':');
+        size_t dirlen = colon ? (size_t)(colon - p) : strlen(p);
+        if (dirlen > 0 && dirlen + 1 + strlen(name) + 1 <= sizeof(buf)) {
+            memcpy(buf, p, dirlen);
+            buf[dirlen] = '/';
+            snprintf(buf + dirlen + 1, sizeof(buf) - dirlen - 1, "%s", name);
+            if (access(buf, X_OK) == 0) return 1;
+        }
+        if (!colon) break;
+        p = colon + 1;
+    }
+    return 0;
+}
+
+static void append_missing(char *list, size_t size, const char *name) {
+    if (list[0]) strncat(list, ", ", size - strlen(list) - 1);
+    strncat(list, name, size - strlen(list) - 1);
+}
+
+// Prüft alle benötigten externen Programme einmal vorab. Fehlt etwas, wird mit
+// einer klaren Meldung abgebrochen, statt später jedes Plugin ins Leere laufen zu lassen.
+static int check_dependencies(void) {
+    const char *tsk[] = { "mmls", "ifind", "icat", "fsstat", "fls" };
+    char missing[512];
+    missing[0] = '\0';
+    for (size_t i = 0; i < sizeof(tsk) / sizeof(tsk[0]); i++)
+        if (!program_in_path(tsk[i])) append_missing(missing, sizeof(missing), tsk[i]);
+
+    const char *rip = getenv("WINSCOPE_RIP");
+    if (!rip || !*rip) rip = "regripper";
+    int rip_ok = program_in_path(rip);
+
+    if (missing[0]) {
+        fprintf(stderr, "[!] Fehlende Sleuth-Kit-Programme: %s\n", missing);
+        fprintf(stderr, "    Installieren mit: sudo apt install sleuthkit\n");
+    }
+    if (!rip_ok) {
+        fprintf(stderr, "[!] RegRipper nicht gefunden (gesucht: '%s').\n", rip);
+        fprintf(stderr, "    Installieren mit: sudo apt install regripper\n");
+        fprintf(stderr, "    Oder WINSCOPE_RIP auf den rip.pl-Pfad setzen, z. B.:\n");
+        fprintf(stderr, "      export WINSCOPE_RIP=/usr/share/regripper/rip.pl\n");
+    }
+    return missing[0] == '\0' && rip_ok;
+}
+
 int main(int argc, char *argv[]) {
     int hash = 1;
     if (argc > 1 && strcmp(argv[1], "--no-hash") == 0) {
@@ -312,6 +367,11 @@ int main(int argc, char *argv[]) {
     const char *exp_user = argv[2];
     const char *exp_comp = argv[3];
     const char *out_dir = argv[4];
+
+    if (!check_dependencies()) {
+        fprintf(stderr, "[!] Abhängigkeiten unvollständig. Vorgang abgebrochen.\n");
+        return 1;
+    }
 
     if (access(image, R_OK) != 0) {
         perror(image);

@@ -34,6 +34,10 @@ dokumentiert das Dateisystem mit The Sleuth Kit und erstellt daraus einen HTML-R
 Standardmäßig wird RegRipper als `regripper` aufgerufen (z. B. Debian/Kali-Paket).
 Ein anderer Aufruf lässt sich über `WINSCOPE_RIP` setzen, etwa `WINSCOPE_RIP=rip.pl`.
 
+WinScope prüft diese Programme beim Start (Preflight). Fehlt eines – etwa `regripper` –,
+bricht es sofort mit einer klaren Meldung und Installationshinweis ab, statt bei jedem
+Plugin nur einen `Exit-Code 127` in den Report zu schreiben.
+
 ## Projektstruktur
 
 ```
