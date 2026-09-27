@@ -7,6 +7,12 @@ SRC      = src/winscope.c
 
 all: $(TARGET)
 
+tests/unit_tests: tests/unit_tests.c $(SRC)
+	$(CC) $(CFLAGS) -o $@ tests/unit_tests.c
+
+test: tests/unit_tests
+	./tests/unit_tests
+
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
 
@@ -18,6 +24,6 @@ uninstall:
 	rm -f "$(BINDIR)/$(TARGET)"
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) tests/unit_tests
 
-.PHONY: all install uninstall clean
+.PHONY: all test install uninstall clean

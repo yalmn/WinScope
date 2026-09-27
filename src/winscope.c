@@ -111,7 +111,7 @@ static char *run_capture(char *const argv[], int *exit_code, int quiet) {
 
 // Führt argv aus und schreibt stdout in die Datei path
 static int run_to_file(char *const argv[], const char *path) {
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) {
         perror(path);
         return -1;
@@ -226,6 +226,27 @@ static void first_line(char *const argv[], char *out, size_t size) {
     memmove(out, t, strlen(t) + 1);
 }
 
+// Zustand eines extrahierten Hives aus dem Basisblock: sind beide Sequenznummern
+// gleich, wurde er sauber geschrieben. Sonst fehlen Änderungen aus den
+// Transaktionslogs (.LOG1/.LOG2), die RegRipper nicht einspielt.
+static void hive_state(const char *path, char *out, size_t size) {
+    unsigned char head[12];
+    FILE *f = fopen(path, "rb");
+    size_t n = f ? fread(head, 1, sizeof(head), f) : 0;
+    if (f) fclose(f);
+    if (n < sizeof(head) || memcmp(head, "regf", 4) != 0) {
+        snprintf(out, size, "keine gültige Hive-Signatur");
+        return;
+    }
+    uint32_t primary = (uint32_t)head[4] | (uint32_t)head[5] << 8 | (uint32_t)head[6] << 16 | (uint32_t)head[7] << 24;
+    uint32_t secondary = (uint32_t)head[8] | (uint32_t)head[9] << 8 | (uint32_t)head[10] << 16 | (uint32_t)head[11] << 24;
+    if (primary == secondary)
+        snprintf(out, size, "sauber (Sequenz %" PRIu32 ")", primary);
+    else
+        snprintf(out, size, "unsauber (Sequenz %" PRIu32 " / %" PRIu32 "): Transaktionslogs nicht eingespielt, "
+                 "jüngste Änderungen können in den Plugin-Ausgaben fehlen", primary, secondary);
+}
+
 static void image_sha256(const char *image, char *out, size_t size) {
     char *sha256sum[] = { "sha256sum", (char *)image, NULL };
     char *shasum[] = { "shasum", "-a", "256", (char *)image, NULL };
@@ -234,6 +255,27 @@ static void image_sha256(const char *image, char *out, size_t size) {
     if (!out[0]) first_line(shasum, out, size);
     char *space = strchr(out, ' ');
     if (space) *space = '\0';
+}
+
+// Kleinbuchstabe eines Zeichens: ASCII und lateinische Großbuchstaben aus
+// Latin-1 in UTF-8 (C3 80 bis C3 9E ohne das Malzeichen C3 97), also auch ÄÖÜ.
+static unsigned fold(const unsigned char **p) {
+    unsigned c = **p;
+    (*p)++;
+    if (c >= 'A' && c <= 'Z') return c + 32;
+    if (c == 0xC3 && **p >= 0x80 && **p <= 0x9E && **p != 0x97) return 0xC300u | (unsigned)(*(*p)++ + 0x20);
+    if (c == 0xC3 && **p) return 0xC300u | *(*p)++;
+    return c;
+}
+
+// Vergleich ohne Beachtung der Groß-/Kleinschreibung, auch für Umlaute. 0 bei Gleichheit.
+static int utf8_casecmp(const char *a, const char *b) {
+    const unsigned char *x = (const unsigned char *)a, *y = (const unsigned char *)b;
+    while (*x && *y) {
+        unsigned cx = fold(&x), cy = fold(&y);
+        if (cx != cy) return cx < cy ? -1 : 1;
+    }
+    return (*x != 0) - (*y != 0);
 }
 
 // Vergleicht den Wert hinter sep in Zeilen, die mit key beginnen. Bei last_component zählt nur der letzte Pfadteil.
@@ -252,7 +294,7 @@ static int value_matches(const char *text, const char *key, char sep, int last_c
             char *slash = strrchr(value, '\\');
             if (slash) value = slash + 1;
         }
-        if (strcasecmp(value, expected) == 0) return 1;
+        if (utf8_casecmp(value, expected) == 0) return 1;
     }
     return 0;
 }
@@ -352,6 +394,7 @@ static int check_dependencies(void) {
     return missing[0] == '\0' && rip_ok;
 }
 
+#ifndef WINSCOPE_TEST
 int main(int argc, char *argv[]) {
     int hash = 1;
     if (argc > 1 && strcmp(argv[1], "--no-hash") == 0) {
@@ -398,6 +441,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Vorhandene Ergebnisse werden nie überschrieben; vor der langen Arbeit prüfen
+    const char *outputs[] = { system_path, software_path, html_path };
+    for (size_t i = 0; i < sizeof(outputs) / sizeof(outputs[0]); i++) {
+        if (access(outputs[i], F_OK) == 0) {
+            fprintf(stderr, "%s existiert bereits und wird nicht überschrieben. Bitte ein anderes Ausgabeverzeichnis wählen.\n",
+                    outputs[i]);
+            return 1;
+        }
+    }
+
     // mmls wird nur einmal ausgeführt, die Ausgabe dient auch dem Report
     char *mmls_argv[] = { "mmls", (char *)image, NULL };
     int mmls_code;
@@ -423,6 +476,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    char sha_system[LINE_SIZE], sha_software[LINE_SIZE], state_system[LINE_SIZE], state_software[LINE_SIZE];
+    image_sha256(system_path, sha_system, sizeof(sha_system));
+    image_sha256(software_path, sha_software, sizeof(sha_software));
+    hive_state(system_path, state_system, sizeof(state_system));
+    hive_state(software_path, state_software, sizeof(state_software));
+    if (strncmp(state_system, "sauber", 6) != 0) fprintf(stderr, "[!] SYSTEM: %s\n", state_system);
+    if (strncmp(state_software, "sauber", 6) != 0) fprintf(stderr, "[!] SOFTWARE: %s\n", state_software);
+
     char sha256[LINE_SIZE] = "nicht berechnet (--no-hash)", tsk_version[LINE_SIZE];
     char *version_argv[] = { "mmls", "-V", NULL };
     if (hash) {
@@ -435,7 +496,7 @@ int main(int argc, char *argv[]) {
     time_t now = time(NULL);
     strftime(created, sizeof(created), "%Y-%m-%d %H:%M:%S %z", localtime(&now));
 
-    FILE *html = fopen(html_path, "w");
+    FILE *html = fopen(html_path, "wx");
     if (!html) {
         perror(html_path);
         free(mmls);
@@ -454,6 +515,10 @@ int main(int argc, char *argv[]) {
     write_row(html, "Inode SYSTEM", inode_system);
     write_row(html, "Inode SOFTWARE", inode_software);
     write_row(html, "Sleuth Kit", tsk_version);
+    write_row(html, "SYSTEM.hive SHA-256", sha_system);
+    write_row(html, "SYSTEM.hive Zustand", state_system);
+    write_row(html, "SOFTWARE.hive SHA-256", sha_software);
+    write_row(html, "SOFTWARE.hive Zustand", state_software);
     write_row(html, "Erwarteter Computername", exp_comp ? exp_comp : "(nicht geprüft)");
     write_row(html, "Erwarteter Benutzername", exp_user ? exp_user : "(nicht geprüft)");
     fputs("</table>\n", html);
@@ -493,3 +558,4 @@ int main(int argc, char *argv[]) {
     printf("\n[+] SYSTEM und SOFTWARE extrahiert und HTML-Report gespeichert unter: %s\n", html_path);
     return 0;
 }
+#endif

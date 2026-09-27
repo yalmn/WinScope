@@ -34,7 +34,7 @@ dokumentiert das Dateisystem mit The Sleuth Kit und erstellt daraus einen HTML-R
 Standardmäßig wird RegRipper als `regripper` aufgerufen (z. B. Debian/Kali-Paket).
 Ein anderer Aufruf lässt sich über `WINSCOPE_RIP` setzen, etwa `WINSCOPE_RIP=rip.pl`.
 
-WinScope prüft diese Programme beim Start (Preflight). Fehlt eines – etwa `regripper` –,
+WinScope prüft diese Programme beim Start (Preflight). Fehlt eines, etwa `regripper`,
 bricht es sofort mit einer klaren Meldung und Installationshinweis ab, statt bei jedem
 Plugin nur einen `Exit-Code 127` in den Report zu schreiben.
 
@@ -44,6 +44,8 @@ Plugin nur einen `Exit-Code 127` in den Report zu schreiben.
 winscope/
 ├── src/
 │   └── winscope.c      # Hauptprogramm
+├── tests/
+│   └── unit_tests.c    # Unit-Tests (make test)
 ├── docs/               # Sequenzdiagramm
 ├── Makefile            # Build und Installation
 └── README.md
@@ -53,6 +55,7 @@ winscope/
 
 ```sh
 make
+make test                         # Unit-Tests
 sudo make install                 # nach /usr/local/bin
 make install PREFIX=$HOME/.local  # ohne root
 ```
@@ -64,8 +67,8 @@ winscope [--no-hash] <image.dd> [<username> <compname>] <output_dir>
 ```
 
 - `<image.dd>`: Windows-RAW-Image (ganze Platte oder einzelne Partition)
-- `<username>`: erwarteter Benutzername (Profilordner im SOFTWARE-Hive) — **optional**
-- `<compname>`: erwarteter Rechnername (SYSTEM-Hive) — **optional**
+- `<username>`: erwarteter Benutzername (Profilordner im SOFTWARE-Hive), **optional**
+- `<compname>`: erwarteter Rechnername (SYSTEM-Hive), **optional**
 - `<output_dir>`: Zielverzeichnis, wird bei Bedarf angelegt
 - `--no-hash`: SHA-256 des Images nicht berechnen (spart bei großen Images viel Zeit)
 
@@ -88,7 +91,8 @@ Erzeugt:
 
 ## HTML-Report enthält
 
-1. Falldaten: Zeitstempel, Image, SHA-256, Offset, Inodes, Sleuth-Kit-Version, Vorgaben
+1. Falldaten: Zeitstempel, Image, SHA-256, Offset, Inodes, Sleuth-Kit-Version, Vorgaben,
+   SHA-256 und Zustand der extrahierten Hives (sauber oder unsauber geschrieben)
 2. SYSTEM- und SOFTWARE-Analyse: Ausgabe der RegRipper-Plugins mit Bewertung
 3. Dateisysteminformationen: Ausgabe von `mmls`, `fsstat` und `fls`
 
@@ -97,6 +101,12 @@ Erzeugt:
 - Das Tool bricht mit Exit-Code 1 ab, wenn keine Partition beide Hives enthält oder die Extraktion fehlschlägt.
 - Schlägt ein einzelnes RegRipper-Plugin oder Sleuth-Kit-Tool fehl, steht der Exit-Code im Report.
 - Beim Abgleich zählt beim Benutzernamen nur der letzte Teil von `ProfileImagePath`, `alice` passt also nicht auf `alice2`.
+  Groß- und Kleinschreibung spielt keine Rolle, auch nicht bei Umlauten (`JÜRGEN` passt auf `Jürgen`).
+- Vorhandene Ergebnisse im Ausgabeverzeichnis (`SYSTEM.hive`, `SOFTWARE.hive`, `winscope_report.html`)
+  werden nie überschrieben. WinScope bricht dann vor der Analyse ab.
+- Ein Hive gilt als unsauber, wenn seine beiden Sequenznummern im Basisblock abweichen. Dann fehlen
+  Änderungen aus den Transaktionslogs (`.LOG1`/`.LOG2`), die RegRipper nicht einspielt. WinScope
+  vermerkt das im Report und auf der Konsole.
 
 ## Version 1
 

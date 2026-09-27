@@ -3,3 +3,4 @@ winscope
 *.hive
 winscope_report.html
 *.dSYM/
+tests/unit_tests
